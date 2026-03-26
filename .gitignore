@@ -1,0 +1,7 @@
+.env
+bin/*
+data/*
+*.exe
+*.dump
+*.dump.gz
+open-filerep
