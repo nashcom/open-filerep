@@ -87,6 +87,7 @@ type SourceEntry struct {
     Action     string `json:"action"`               // allow | block | whitelist | monitor
     Threat string `json:"threat,omitempty"`
     Pattern    string `json:"pattern,omitempty"`
+    FileSize   int64  `json:"fileSize,omitempty"`   // bytes (0 = not known)
     ReportedAt int64  `json:"reportedAt"`           // Unix epoch
     Note       string `json:"note,omitempty"`
 }
@@ -97,6 +98,7 @@ type SourceEntry struct {
 type FileRecord struct {
     SHA256     string   `json:"sha256"`
     FileNames  []string `json:"fileNames,omitempty"` // all known names for this hash, deduped
+    FileSize   int64    `json:"fileSize,omitempty"`  // bytes (0 = not known)
 
     // Resolved fields — written by resolve(), read by consumers
     EffectiveStatus string `json:"effectiveStatus"` // clean|infected|quarantined|unknown|error
@@ -114,6 +116,7 @@ type FileRecord struct {
 type addRequest struct {
     SHA256     string `json:"sha256"`
     FileName   string `json:"fileName,omitempty"`
+    FileSize   int64  `json:"fileSize,omitempty"`
     Source     string `json:"source"`
     Status     string `json:"status"`
     Action     string `json:"action"`
@@ -123,16 +126,18 @@ type addRequest struct {
 }
 
 // patchRequest is the body accepted by PUT /files/{sha256} (no business rules).
-// Only fileName and note are patchable — sources are managed via scan API.
+// Only fileName, fileSize, and note are patchable — sources are managed via scan API.
 type patchRequest struct {
     Note     string `json:"note"`
     FileName string `json:"fileName"`
+    FileSize int64  `json:"fileSize,omitempty"`
 }
 
 // ScanRequest is the body for POST /scan/clean and POST /scan/infected.
 type ScanRequest struct {
     SHA256     string `json:"sha256"`
     FileName   string `json:"fileName,omitempty"`
+    FileSize   int64  `json:"fileSize,omitempty"`
     Pattern    string `json:"pattern"`              // ClamAV pattern version
     Threat string `json:"threat,omitempty"` // virus / threat name (infected only)
     Source     string `json:"source,omitempty"`    // reporting source
@@ -649,11 +654,15 @@ func handleAdd(w http.ResponseWriter, r *http.Request) {
         Action:     szAction,
         Threat: req.Threat,
         Pattern:    req.Pattern,
+        FileSize:   req.FileSize,
         Note:       req.Note,
     }
     upsertSource(&rec, entry)
 
     addFileName(&rec, req.FileName)
+    if req.FileSize > 0 {
+        rec.FileSize = req.FileSize
+    }
 
     if err := dbPut(szHash, rec); err != nil {
         writeError(w, http.StatusInternalServerError, err.Error())
@@ -698,8 +707,8 @@ func handleGet(w http.ResponseWriter, r *http.Request, szHash string) {
 }
 
 // PUT /files/{sha256}
-// Body: { "fileName": "...", "note": "..." }
-// Only fileName and note may be patched — sources are managed via scan API.
+// Body: { "fileName": "...", "fileSize": ..., "note": "..." }
+// Only fileName, fileSize, and note may be patched — sources are managed via scan API.
 func handleUpdate(w http.ResponseWriter, r *http.Request, szHash string) {
     qwReqUpdate.Add(1)
     rec, err := dbGet(szHash)
@@ -721,6 +730,9 @@ func handleUpdate(w http.ResponseWriter, r *http.Request, szHash string) {
     addFileName(&rec, patch.FileName)
     if patch.Note != "" {
         rec.Note = patch.Note
+    }
+    if patch.FileSize > 0 {
+        rec.FileSize = patch.FileSize
     }
     rec.LastSeen = nowEpoch()
 
@@ -979,15 +991,19 @@ func handleScanClean(w http.ResponseWriter, r *http.Request) {
     }
 
     entry := SourceEntry{
-        Source:  szSource,
-        Status:  "clean",
-        Action:  "allow",
-        Pattern: req.Pattern,
-        Note:    req.Note,
+        Source:   szSource,
+        Status:   "clean",
+        Action:   "allow",
+        Pattern:  req.Pattern,
+        FileSize: req.FileSize,
+        Note:     req.Note,
     }
     upsertSource(&rec, entry)
 
     addFileName(&rec, req.FileName)
+    if req.FileSize > 0 {
+        rec.FileSize = req.FileSize
+    }
 
     if err := dbPut(szHash, rec); err != nil {
         writeError(w, http.StatusInternalServerError, err.Error())
@@ -1046,13 +1062,17 @@ func handleScanInfected(w http.ResponseWriter, r *http.Request) {
         Source:     szSource,
         Status:     "infected",
         Action:     "block",
-        Threat: szThreat,
+        Threat:     szThreat,
         Pattern:    req.Pattern,
+        FileSize:   req.FileSize,
         Note:       req.Note,
     }
     upsertSource(&rec, entry)
 
     addFileName(&rec, req.FileName)
+    if req.FileSize > 0 {
+        rec.FileSize = req.FileSize
+    }
 
     if err := dbPut(szHash, rec); err != nil {
         writeError(w, http.StatusInternalServerError, err.Error())
@@ -1124,6 +1144,9 @@ func recKV(rec FileRecord) []string {
         "action",          rec.EffectiveAction,
         "firstSeen",       epochToStr(rec.FirstSeen),
         "lastSeen",        epochToStr(rec.LastSeen),
+    }
+    if rec.FileSize > 0 {
+        vec = append(vec, "fileSize", strconv.FormatInt(rec.FileSize, 10))
     }
     for _, szName := range rec.FileNames {
         vec = append(vec, "fileName", szName)
@@ -1212,11 +1235,11 @@ func handleSimpleCheck(w http.ResponseWriter, r *http.Request) {
     writeTextKV(w, http.StatusOK, append(vec, recKV(rec)...)...)
 }
 
-// GET /simple/clean?sha256=<hash>&pattern=<version>&fileName=<name>&note=<text>&source=<src>
+// GET /simple/clean?sha256=<hash>&pattern=<version>&fileName=<name>&fileSize=<bytes>&note=<text>&source=<src>
 // Same rules as POST /scan/clean — infected beats clean.
 func handleSimpleClean(w http.ResponseWriter, r *http.Request) {
     qwReqSimpleClean.Add(1)
-    if sz := unknownParam(r, "sha256", "pattern", "source", "fileName", "note"); sz != "" {
+    if sz := unknownParam(r, "sha256", "pattern", "source", "fileName", "fileSize", "note"); sz != "" {
         writeText(w, http.StatusBadRequest, "error=unknown parameter: "+sz+"\n")
         return
     }
@@ -1258,17 +1281,23 @@ func handleSimpleClean(w http.ResponseWriter, r *http.Request) {
         return
     }
 
+    nFileSize, _ := strconv.ParseInt(r.URL.Query().Get("fileSize"), 10, 64)
+
     entry := SourceEntry{
-        Source:  szSource,
-        Status:  "clean",
-        Action:  "allow",
-        Pattern: r.URL.Query().Get("pattern"),
-        Note:    r.URL.Query().Get("note"),
+        Source:   szSource,
+        Status:   "clean",
+        Action:   "allow",
+        Pattern:  r.URL.Query().Get("pattern"),
+        FileSize: nFileSize,
+        Note:     r.URL.Query().Get("note"),
     }
     upsertSource(&rec, entry)
 
     szFileName := r.URL.Query().Get("fileName")
     addFileName(&rec, szFileName)
+    if nFileSize > 0 {
+        rec.FileSize = nFileSize
+    }
 
     if err := dbPut(szHash, rec); err != nil {
         writeText(w, http.StatusInternalServerError, "error="+err.Error()+"\n")
@@ -1280,11 +1309,11 @@ func handleSimpleClean(w http.ResponseWriter, r *http.Request) {
     writeTextKV(w, http.StatusOK, append(vec, recKV(rec)...)...)
 }
 
-// GET /simple/infected?sha256=<hash>&pattern=<version>&fileName=<name>&threat=<name>&note=<text>&source=<src>
+// GET /simple/infected?sha256=<hash>&pattern=<version>&fileName=<name>&fileSize=<bytes>&threat=<name>&note=<text>&source=<src>
 // Same rules as POST /scan/infected — always wins.
 func handleSimpleInfected(w http.ResponseWriter, r *http.Request) {
     qwReqSimpleInfected.Add(1)
-    if sz := unknownParam(r, "sha256", "pattern", "source", "threat", "fileName", "note"); sz != "" {
+    if sz := unknownParam(r, "sha256", "pattern", "source", "threat", "fileName", "fileSize", "note"); sz != "" {
         writeText(w, http.StatusBadRequest, "error=unknown parameter: "+sz+"\n")
         return
     }
@@ -1317,19 +1346,24 @@ func handleSimpleInfected(w http.ResponseWriter, r *http.Request) {
     }
 
     szSig := r.URL.Query().Get("threat")
+    nFileSize, _ := strconv.ParseInt(r.URL.Query().Get("fileSize"), 10, 64)
 
     entry := SourceEntry{
         Source:     szSource,
         Status:     "infected",
         Action:     "block",
-        Threat: szSig,
+        Threat:     szSig,
         Pattern:    r.URL.Query().Get("pattern"),
+        FileSize:   nFileSize,
         Note:       r.URL.Query().Get("note"),
     }
     upsertSource(&rec, entry)
 
     szFileName := r.URL.Query().Get("fileName")
     addFileName(&rec, szFileName)
+    if nFileSize > 0 {
+        rec.FileSize = nFileSize
+    }
 
     if err := dbPut(szHash, rec); err != nil {
         writeText(w, http.StatusInternalServerError, "error="+err.Error()+"\n")

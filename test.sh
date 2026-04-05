@@ -111,6 +111,51 @@ CODE=$(curl -s -o /dev/null -w "%{http_code}" "$BASE/files/$SHA_CLEAN")
 check "get after delete: 404" "" "$CODE" "404"
 
 # ============================================================================
+sep "CRUD — fileSize tracking"
+# ============================================================================
+info "POST /files with fileSize"
+RES=$(curl -s -X POST "$BASE/files" \
+  -H "Content-Type: application/json" \
+  -d "{\"sha256\":\"$SHA_CLEAN\",\"fileName\":\"report.pdf\",\"fileSize\":45829,\"source\":\"admin\",\"status\":\"clean\"}")
+check "add with fileSize: fileSize stored" '.fileSize == 45829' "$RES" "true"
+check "add with fileSize: sources[0].fileSize" '.sources[0].fileSize == 45829' "$RES" "true"
+
+info "PUT update fileSize"
+RES=$(curl -s -X PUT "$BASE/files/$SHA_CLEAN" \
+  -H "Content-Type: application/json" \
+  -d "{\"fileSize\":50000}")
+check "PUT fileSize: fileSize updated" '.fileSize == 50000' "$RES" "true"
+
+info "POST /scan/clean with fileSize"
+RES=$(curl -s -X POST "$BASE/scan/clean" \
+  -H "Content-Type: application/json" \
+  -d "{\"sha256\":\"$SHA_DOC\",\"fileName\":\"document.docx\",\"fileSize\":123456,\"pattern\":\"$PAT_NEW\",\"source\":\"clamav\"}")
+check "scan/clean with fileSize: stored" '.stored == true' "$RES" "true"
+check "scan/clean with fileSize: record.fileSize" '.record.fileSize == 123456' "$RES" "true"
+check "scan/clean with fileSize: source.fileSize" '.record.sources[0].fileSize == 123456' "$RES" "true"
+
+info "POST /scan/infected with fileSize"
+RES=$(curl -s -X POST "$BASE/scan/infected" \
+  -H "Content-Type: application/json" \
+  -d "{\"sha256\":\"$SHA_EICAR\",\"fileName\":\"eicar.com\",\"fileSize\":68,\"pattern\":\"$PAT_NEW\",\"threat\":\"Eicar-Signature\"}")
+check "scan/infected with fileSize: fileSize stored" '.record.fileSize == 68' "$RES" "true"
+check "scan/infected with fileSize: source.fileSize" '.record.sources[0].fileSize == 68' "$RES" "true"
+
+info "GET /simple/clean with fileSize"
+RES=$(curl -s "$BASE/simple/clean?sha256=$SHA_SIMPLE&pattern=$PAT_NEW&fileSize=99999&source=clamav")
+check "simple/clean fileSize param accepted" "" "$(echo "$RES" | grep 'fileSize=99999')" "fileSize=99999"
+
+info "GET /simple/infected with fileSize"
+RES=$(curl -s "$BASE/simple/infected?sha256=$SHA_WHITELIST&pattern=$PAT_NEW&fileSize=54321&threat=Malware.Test&source=clamav")
+check "simple/infected fileSize param accepted" "" "$(echo "$RES" | grep 'fileSize=54321')" "fileSize=54321"
+
+curl -s -o /dev/null -X DELETE "$BASE/files/$SHA_CLEAN"
+curl -s -o /dev/null -X DELETE "$BASE/files/$SHA_DOC"
+curl -s -o /dev/null -X DELETE "$BASE/files/$SHA_EICAR"
+curl -s -o /dev/null -X DELETE "$BASE/files/$SHA_SIMPLE"
+curl -s -o /dev/null -X DELETE "$BASE/files/$SHA_WHITELIST"
+
+# ============================================================================
 sep "Validation — unknown JSON fields rejected"
 # ============================================================================
 info "POST /files with unknown JSON field"

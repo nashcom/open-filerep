@@ -12,6 +12,7 @@ Each record is identified by the SHA-256 of the file content.
 |--------------|--------|--------------------------------------------------------------------|
 | `sha256`     | string | 64-character lowercase hex — primary key                           |
 | `fileNames`  | array  | All known file names for this hash (deduped, grows on each report) |
+| `fileSize`   | int64  | File size in bytes (optional, 0 = not known)                       |
 | `status`     | string | `clean` · `infected` · `quarantined` · `error` · `unknown`         |
 | `action`     | string | `allow` · `block` · `quarantine` · `whitelist` · `monitor`  — `whitelist` is a persistent admin trust override that beats scanner results |
 | `threat`     | string | Virus or threat name as reported by the scanner (optional)         |
@@ -60,6 +61,7 @@ curl -s -X POST http://localhost:8080/files \
   -d '{
     "sha256":   "a3f1c2d4e5b6789012345678901234567890123456789012345678901234abcd",
     "fileName": "invoice.pdf",
+    "fileSize": 45829,
     "status":   "clean",
     "action":   "allow",
     "source":   "clamav",
@@ -74,6 +76,7 @@ curl -s -X POST http://localhost:8080/files \
 {
   "sha256": "a3f1c2d4e5b6789012345678901234567890123456789012345678901234abcd",
   "fileNames": ["invoice.pdf"],
+  "fileSize": 45829,
   "effectiveStatus": "clean",
   "effectiveAction": "allow",
   "resolvedBy": "clamav",
@@ -83,6 +86,7 @@ curl -s -X POST http://localhost:8080/files \
       "status":     "clean",
       "action":     "allow",
       "pattern":    "daily.cvd:26843",
+      "fileSize":   45829,
       "note":       "no threats found",
       "reportedAt": 1743000000
     }
@@ -331,6 +335,7 @@ curl -s -X POST http://localhost:8080/scan/clean \
   -d '{
     "sha256":   "a3f1c2d4e5b6789012345678901234567890123456789012345678901234abcd",
     "fileName": "invoice.pdf",
+    "fileSize": 45829,
     "pattern":  "daily.cvd:26843",
     "source":   "clamav",
     "note":     "no threats found"
@@ -346,6 +351,7 @@ curl -s -X POST http://localhost:8080/scan/clean \
   "record": {
     "sha256": "a3f1c2d4e5b6789012345678901234567890123456789012345678901234abcd",
     "fileNames": ["invoice.pdf"],
+    "fileSize": 45829,
     "effectiveStatus": "clean",
     "effectiveAction": "allow",
     "resolvedBy": "clamav",
@@ -355,6 +361,7 @@ curl -s -X POST http://localhost:8080/scan/clean \
         "status":     "clean",
         "action":     "allow",
         "pattern":    "daily.cvd:26843",
+        "fileSize":   45829,
         "note":       "no threats found",
         "reportedAt": 1743000000
       }
@@ -391,8 +398,9 @@ curl -s -X POST http://localhost:8080/scan/infected \
   -d '{
     "sha256":     "131f95c51cc819465fa1797f6ccacf9d494aaaff46fa3eac73ae63ffbdfd8267",
     "fileName":   "eicar.com",
+    "fileSize":   68,
     "pattern":    "daily.cvd:26843",
-    "threat": "Eicar-Signature",
+    "threat":     "Eicar-Signature",
     "source":     "clamav",
     "note":       "ClamAV 1.4"
   }' | jq .
@@ -407,6 +415,7 @@ curl -s -X POST http://localhost:8080/scan/infected \
   "record": {
     "sha256": "131f95c51cc819465fa1797f6ccacf9d494aaaff46fa3eac73ae63ffbdfd8267",
     "fileNames": ["eicar.com"],
+    "fileSize": 68,
     "effectiveStatus": "infected",
     "effectiveAction": "block",
     "resolvedBy": "clamav",
@@ -415,8 +424,9 @@ curl -s -X POST http://localhost:8080/scan/infected \
         "source":     "clamav",
         "status":     "infected",
         "action":     "block",
-        "threat": "Eicar-Signature",
+        "threat":     "Eicar-Signature",
         "pattern":    "daily.cvd:26843",
+        "fileSize":   68,
         "note":       "ClamAV 1.4",
         "reportedAt": 1743001200
       }
@@ -556,7 +566,7 @@ pattern=daily.cvd:26800
 ### Report clean
 
 ```
-GET /simple/clean?sha256=<hash>&pattern=<version>&source=<src>&fileName=<name>&note=<text>
+GET /simple/clean?sha256=<hash>&pattern=<version>&source=<src>&fileName=<name>&fileSize=<bytes>&note=<text>
 ```
 
 ```bash
@@ -565,6 +575,7 @@ sha256=a3f1c2d4e5b6789012345678901234567890123456789012345678901234abcd\
 &pattern=daily.cvd:26843\
 &source=clamav\
 &fileName=invoice.pdf\
+&fileSize=45829\
 &note=no+threats+found"
 ```
 
@@ -574,6 +585,7 @@ sha256=a3f1c2d4e5b6789012345678901234567890123456789012345678901234abcd\
 stored=true
 reason=clean result recorded
 sha256=a3f1c2d4e5b6789012345678901234567890123456789012345678901234abcd
+fileSize=45829
 status=clean
 action=allow
 firstSeen=2026-03-25T12:00:00Z
@@ -586,7 +598,7 @@ pattern=daily.cvd:26843
 ### Report infected
 
 ```
-GET /simple/infected?sha256=<hash>&pattern=<version>&source=<src>&threat=<name>&fileName=<name>&note=<text>
+GET /simple/infected?sha256=<hash>&pattern=<version>&source=<src>&threat=<name>&fileName=<name>&fileSize=<bytes>&note=<text>
 ```
 
 ```bash
@@ -596,6 +608,7 @@ sha256=131f95c51cc819465fa1797f6ccacf9d494aaaff46fa3eac73ae63ffbdfd8267\
 &source=clamav\
 &threat=Eicar-Signature\
 &fileName=eicar.com\
+&fileSize=68\
 &note=ClamAV+1.4"
 ```
 
@@ -605,6 +618,7 @@ sha256=131f95c51cc819465fa1797f6ccacf9d494aaaff46fa3eac73ae63ffbdfd8267\
 stored=true
 reason=infected result recorded
 sha256=131f95c51cc819465fa1797f6ccacf9d494aaaff46fa3eac73ae63ffbdfd8267
+fileSize=68
 status=infected
 action=block
 firstSeen=2026-03-25T14:04:00Z
